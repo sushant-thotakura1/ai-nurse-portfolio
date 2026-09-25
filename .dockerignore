@@ -1,0 +1,75 @@
+# Dependencies
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Admin dashboard (separate container)
+admin-dashboard
+
+# Environment files (never copy these to container)
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Build output
+dist
+build
+
+# Development files
+*.log
+logs
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# Test files -- deliberately NOT excluded (STATUS.md "Known landmines").
+# This image already ships full TS source via ts-node rather than a
+# compiled dist (see Dockerfile), so excluding test files bought no real
+# slimming -- it only meant `npx jest` couldn't run in the container at
+# all without manually `docker cp`-ing jest.config.js, tests/, and every
+# individual src/**/__tests__/*.test.ts file back in per session.
+coverage
+
+# Uploads and temp files (created at runtime)
+uploads/*
+!uploads/.gitkeep
+
+# Database files
+*.db
+*.db-journal
+*.sqlite
+
+# Documentation (except README)
+*.md
+!README.md
+docs
+
+# Docker files (not needed inside container)
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.circleci
+
+# Backup files
+*.bak
+*~
+prisma.config.ts.bak
+temp_*

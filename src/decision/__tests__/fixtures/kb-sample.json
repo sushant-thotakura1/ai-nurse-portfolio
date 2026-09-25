@@ -1,0 +1,358 @@
+{
+  "valid": true,
+  "error_count": 0,
+  "errors": [],
+  "warnings": [],
+  "knowledge_graph": {
+    "meta": {
+      "source_file": "kb-sample.xlsx",
+      "generated_at": "2026-09-24T15:45:20.834707Z",
+      "schema_version": "v3.2",
+      "condition": {
+        "name": "Sample Condition",
+        "condition_type": "episodic",
+        "classifications": [
+          "TEST_CLS"
+        ]
+      },
+      "required_inputs": [
+        "classification",
+        "surgery_date"
+      ]
+    },
+    "condition": {
+      "name": "Sample Condition",
+      "condition_type": "episodic",
+      "trigger": [
+        "surgery_date"
+      ],
+      "phase_model": "linear",
+      "classifications": {
+        "TEST_CLS": {
+          "phases": {
+            "PHASE_I": {
+              "name": "Phase I",
+              "track": "episodic",
+              "day_range": [
+                0,
+                14
+              ],
+              "day_range_type": "fixed",
+              "focus": "Recovery focus",
+              "review": "Review wound",
+              "instruction_sheet": "v1",
+              "notes": ""
+            }
+          }
+        }
+      }
+    },
+    "symptoms": {},
+    "red_flags": [
+      {
+        "id": "RF_WEIGHT",
+        "symptom_id": null,
+        "trigger": "Weight at or above 80kg",
+        "applicable_classifications": [
+          "ALL"
+        ],
+        "applicable_phases": [
+          "ALL"
+        ],
+        "action": "ESCALATE",
+        "urgency": "immediate",
+        "patient_action": "NURSE_CALLBACK",
+        "context_note": "",
+        "rationale": "Fluid overload risk"
+      },
+      {
+        "id": "RF_BREATH",
+        "symptom_id": null,
+        "trigger": "Patient reports breathlessness",
+        "applicable_classifications": [
+          "ALL"
+        ],
+        "applicable_phases": [
+          "ALL"
+        ],
+        "action": "ADVISE",
+        "urgency": "routine",
+        "patient_action": "NURSE_CALLBACK",
+        "context_note": "",
+        "rationale": "Early symptom tracking"
+      },
+      {
+        "id": "RF_DELTA",
+        "symptom_id": null,
+        "trigger": "Weight gain of 2kg in 48h",
+        "applicable_classifications": [
+          "ALL"
+        ],
+        "applicable_phases": [
+          "ALL"
+        ],
+        "action": "ESCALATE",
+        "urgency": "immediate",
+        "patient_action": "NURSE_CALLBACK",
+        "context_note": "",
+        "rationale": "Rapid fluid gain"
+      }
+    ],
+    "instructions": [],
+    "settings": {
+      "max_questions_per_checkin": 6,
+      "min_days_between_checkins": "3d",
+      "checkin_trigger_stale_count": 1,
+      "time_uncertainty_tolerance": 0.25,
+      "escalation_message": null
+    },
+    "facts": {
+      "weight": {
+        "display_name": "Weight",
+        "type": "number",
+        "unit": "kg",
+        "valid_for": "7d",
+        "valid_for_hours": 168,
+        "required": true,
+        "area": "vitals",
+        "applicable_classifications": [
+          "ALL"
+        ],
+        "applicable_phases": [
+          "ALL"
+        ],
+        "extraction_hint": "Patient weight"
+      },
+      "breathlessness": {
+        "display_name": "Breathlessness",
+        "type": "boolean",
+        "unit": null,
+        "valid_for": "7d",
+        "valid_for_hours": 168,
+        "required": false,
+        "area": "symptom",
+        "applicable_classifications": [
+          "ALL"
+        ],
+        "applicable_phases": [
+          "ALL"
+        ],
+        "extraction_hint": "Reported breathlessness"
+      }
+    },
+    "rules": [
+      {
+        "rule_id": "RULE_WEIGHT",
+        "red_flag_id": "RF_WEIGHT",
+        "order": 1,
+        "expression": "weight >= 80",
+        "ast": {
+          "kind": "compare",
+          "op": ">=",
+          "left": {
+            "kind": "fact",
+            "name": "weight"
+          },
+          "right": {
+            "kind": "number",
+            "value": 80
+          }
+        },
+        "action": "ESCALATE",
+        "patient_action": "NURSE_CALLBACK",
+        "applicable_classifications": [
+          "ALL"
+        ],
+        "applicable_phases": [
+          "ALL"
+        ],
+        "reviewed_by": "Dr Smith",
+        "reviewed_at": "2026-07-01"
+      },
+      {
+        "rule_id": "RULE_BREATH",
+        "red_flag_id": "RF_BREATH",
+        "order": 1,
+        "expression": "breathlessness",
+        "ast": {
+          "kind": "fact",
+          "name": "breathlessness"
+        },
+        "action": "ADVISE",
+        "patient_action": "SELF_MONITOR",
+        "applicable_classifications": [
+          "ALL"
+        ],
+        "applicable_phases": [
+          "ALL"
+        ],
+        "reviewed_by": "Dr Smith",
+        "reviewed_at": "2026-07-01"
+      },
+      {
+        "rule_id": "RULE_DELTA",
+        "red_flag_id": "RF_DELTA",
+        "order": 1,
+        "expression": "delta(weight, 48h) >= 2",
+        "ast": {
+          "kind": "compare",
+          "op": ">=",
+          "left": {
+            "kind": "call",
+            "func": "delta",
+            "fact": "weight",
+            "window": "48h"
+          },
+          "right": {
+            "kind": "number",
+            "value": 2
+          }
+        },
+        "action": "ESCALATE",
+        "patient_action": "NURSE_CALLBACK",
+        "applicable_classifications": [
+          "ALL"
+        ],
+        "applicable_phases": [
+          "ALL"
+        ],
+        "reviewed_by": "Dr Smith",
+        "reviewed_at": "2026-07-01"
+      }
+    ],
+    "rule_tests": [
+      {
+        "test_id": "T_WEIGHT_FIRES",
+        "rule_id": "RULE_WEIGHT",
+        "scenario": "Weight above threshold",
+        "observations": [
+          {
+            "fact": "weight",
+            "value": 90.0,
+            "offset_hours": 0
+          }
+        ],
+        "expect": "FIRES",
+        "notes": "Reviewed by Dr Smith"
+      },
+      {
+        "test_id": "T_WEIGHT_NOT_FIRES",
+        "rule_id": "RULE_WEIGHT",
+        "scenario": "Weight below threshold",
+        "observations": [
+          {
+            "fact": "weight",
+            "value": 50.0,
+            "offset_hours": 0
+          }
+        ],
+        "expect": "NOT_FIRES",
+        "notes": "Reviewed by Dr Smith"
+      },
+      {
+        "test_id": "T_BREATH_FIRES",
+        "rule_id": "RULE_BREATH",
+        "scenario": "Patient reports breathlessness",
+        "observations": [
+          {
+            "fact": "breathlessness",
+            "value": true,
+            "offset_hours": 0
+          }
+        ],
+        "expect": "FIRES",
+        "notes": "Reviewed by Dr Smith"
+      },
+      {
+        "test_id": "T_BREATH_NOT_FIRES",
+        "rule_id": "RULE_BREATH",
+        "scenario": "Patient does not report breathlessness",
+        "observations": [
+          {
+            "fact": "breathlessness",
+            "value": false,
+            "offset_hours": 0
+          }
+        ],
+        "expect": "NOT_FIRES",
+        "notes": "Reviewed by Dr Smith"
+      },
+      {
+        "test_id": "T_DELTA_FIRES",
+        "rule_id": "RULE_DELTA",
+        "scenario": "Gained 2kg in two days",
+        "observations": [
+          {
+            "fact": "weight",
+            "value": 70.0,
+            "offset_hours": -48
+          },
+          {
+            "fact": "weight",
+            "value": 72.0,
+            "offset_hours": 0
+          }
+        ],
+        "expect": "FIRES",
+        "notes": "Reviewed by Dr Smith"
+      },
+      {
+        "test_id": "T_DELTA_NOT_FIRES",
+        "rule_id": "RULE_DELTA",
+        "scenario": "Stable weight over two days",
+        "observations": [
+          {
+            "fact": "weight",
+            "value": 70.0,
+            "offset_hours": -48
+          },
+          {
+            "fact": "weight",
+            "value": 70.0,
+            "offset_hours": 0
+          }
+        ],
+        "expect": "NOT_FIRES",
+        "notes": "Reviewed by Dr Smith"
+      }
+    ],
+    "scoring": {
+      "thresholds": {
+        "REASSURE": {
+          "max_score": 0,
+          "patient_action": "SELF_MONITOR",
+          "action": "Reassure patient. Symptom expected at this phase."
+        },
+        "ADVISE": {
+          "min_score": 1,
+          "max_score": 2,
+          "patient_action": "NURSE_CALLBACK",
+          "action": "Provide guidance. Nurse reaches out within SLA. Patient does not need to travel."
+        },
+        "ESCALATE": {
+          "min_score": 3,
+          "patient_action": "FACILITY_TODAY",
+          "action": "Urgent clinical review needed. Patient Action on the triggering row overrides this default (may be ER_NOW)."
+        }
+      },
+      "rules": {
+        "escalate_override": "Any question branch with escalate=true → immediately ESCALATE regardless of score. Use patient_action from that branch.",
+        "phase_override": "If symptom has phase_override for current phase, use that action directly before scoring.",
+        "patient_action_precedence": "Branch-level patient_action overrides threshold default. Red flag patient_action overrides branch default."
+      }
+    },
+    "traversal": [
+      "Read Condition Type, Trigger, Phase Model, and Classification from the condition node.",
+      "If Phase Model = cyclical, use the most recent available trigger date across all trigger types.",
+      "Determine patient Track from entry trigger: surgery_date/discharge_date → episodic; enrollment_date/diagnosis_date → chronic.",
+      "Calculate days_since_event → determine current phase within the patient's classification.",
+      "Load phases and instructions filtered by: Applicable Classifications includes patient's classification (or 'ALL'), AND Track matches patient's track or Track=hybrid.",
+      "Match reported symptom to symptoms registry.",
+      "Check phase_override — if exists for current phase, return that action.",
+      "Otherwise, initialize score = severity_score.",
+      "Walk assessment_questions in order, apply risk_shift from patient answers.",
+      "If any branch has escalate=true, immediately return ESCALATE.",
+      "Sum score → compare to thresholds → return action (REASSURE / ADVISE / ESCALATE)."
+    ]
+  }
+}

@@ -1,0 +1,184 @@
+services:
+  # PostgreSQL Database with pgvector extension for RAG
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ainurse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ainurse
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: ainurse
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ainurse-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ainurse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Speaches - self-hosted OpenAI-compatible Whisper STT + Kokoro TTS service
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    container_name: ainurse-speaches
+    restart: unless-stopped
+    environment:
+      - WHISPER__MODEL=${STT_WHISPER_MODEL:-Systran/faster-whisper-large-v3}
+      - WHISPER__INFERENCE_DEVICE=cpu
+      - WHISPER__COMPUTE_TYPE=int8
+    volumes:
+      - hf-hub-cache:/root/.cache/huggingface/hub
+    networks:
+      - ainurse-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    # Pre-download models and warm up Whisper so the first real request does not cold-start.
+    # The warmup sends a 1-second silent WAV through the transcription API, forcing the model
+    # weights into memory before any patient voice note arrives.
+    command: >
+      sh -c "uvicorn --factory speaches.main:create_app --host 0.0.0.0 --port 8000 &
+             until curl -sf http://localhost:8000/health; do sleep 2; done &&
+             curl -sf -X POST http://localhost:8000/v1/models/${STT_WHISPER_MODEL:-Systran/faster-whisper-large-v3} || true &&
+             curl -sf -X POST http://localhost:8000/v1/models/speaches-ai/Kokoro-82M-v1.0-ONNX-fp16 || true &&
+             echo 'Warming up Whisper model (loading weights into memory)...' &&
+             python3 -c 'import wave; w=wave.open(\"/tmp/warmup.wav\",\"w\"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(bytes(32000)); w.close()' &&
+             curl -sf -X POST http://localhost:8000/v1/audio/transcriptions -F file=@/tmp/warmup.wav -F model=${STT_WHISPER_MODEL:-Systran/faster-whisper-large-v3} -F response_format=verbose_json > /dev/null || true &&
+             echo 'Whisper model warm-up complete.' &&
+             wait"
+
+  # Backend Service (Node.js + Express + Python for KG parsing)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: ainurse-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      speaches:
+        condition: service_started
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://ainurse:${DB_PASSWORD:-changeme}@postgres:5432/ainurse
+
+      # API Keys - Required
+      SARVAM_API_KEY: ${SARVAM_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+
+      # Intron Voice API (African languages) — integrator-enabled key required
+      # for /tts/v1/generate + /file/v1/upload/sync
+      INTRON_API_KEY: ${INTRON_API_KEY}
+
+      # AWS Configuration (Optional)
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+
+      # Security - MUST be set in production
+      JWT_SECRET: ${JWT_SECRET:-change_this_in_production_min_32_chars_long}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change_this_encryption_key_32ch}
+
+      # Exotel Configuration (Optional - for production calls)
+      EXOTEL_API_KEY: ${EXOTEL_API_KEY}
+      EXOTEL_API_TOKEN: ${EXOTEL_API_TOKEN}
+      EXOTEL_SID: ${EXOTEL_SID}
+
+      # RAG Configuration (Optional - uses defaults if not set)
+      RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-1000}
+      RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-200}
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
+      RAG_TOP_K: ${RAG_TOP_K:-5}
+
+      # STT Configuration
+      STT_WHISPER_BASE_URL: http://speaches:8000/v1
+      STT_WHISPER_MODEL: ${STT_WHISPER_MODEL:-Systran/faster-whisper-large-v3}
+      STT_DEFAULT_PROVIDER: ${STT_DEFAULT_PROVIDER:-sarvam}
+
+      # TTS Configuration
+      TTS_DEFAULT_PROVIDER: ${TTS_DEFAULT_PROVIDER:-sarvam}
+
+      # Arize AX Tracing (optional — omit to disable)
+      ARIZE_SPACE_ID: ${ARIZE_SPACE_ID}
+      ARIZE_API_KEY: ${ARIZE_API_KEY}
+      ARIZE_PROJECT_NAME: ${ARIZE_PROJECT_NAME:-ai-nurse-poc}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./config:/app/config
+      - ./knowledge-base:/app/knowledge-base
+      - ./reference-dataset:/app/reference-dataset
+      - ./scripts:/app/scripts
+    networks:
+      - ainurse-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      start_period: 40s
+      retries: 3
+    command: sh -c "npm exec prisma migrate deploy && npm start"
+
+  # Frontend Service (Nginx serving React SPA)
+  frontend:
+    build:
+      context: ./admin-dashboard
+      dockerfile: Dockerfile
+    container_name: ainurse-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-3001}:80"
+    networks:
+      - ainurse-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 40s
+      retries: 3
+
+  # Screening wizard SPA (Nginx serving the built React app)
+  screening-web:
+    build:
+      context: ./screening-web
+      dockerfile: Dockerfile
+    container_name: ainurse-screening-web
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${SCREENING_WEB_PORT:-5180}:80"
+    networks:
+      - ainurse-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 40s
+      retries: 3
+
+networks:
+  ainurse-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  hf-hub-cache:
+    driver: local

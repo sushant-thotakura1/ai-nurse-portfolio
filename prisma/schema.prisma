@@ -1,0 +1,527 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  status    String   @default("ACTIVE")
+  settings  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  patients        Patient[]
+  callSessions    CallSession[]
+  knowledgeGraphs KnowledgeGraph[]
+  scheduledCalls  ScheduledCall[]
+  clinicalEvents  ClinicalEvent[]
+  tenantUsers     TenantUser[]
+  documents       TenantDocument[]
+  messageSessions MessageSession[]
+  providerConfigs ProviderConfig[]
+  patientFacts    PatientFact[]
+  assessments     Assessment[]
+  assessmentFlags AssessmentFlag[]
+  screeningRecords ScreeningRecord[]
+
+  @@index([slug])
+  @@index([status])
+  @@map("tenants")
+}
+
+model Patient {
+  id                String    @id @default(uuid())
+  tenantId          String    @map("tenant_id")
+  phoneNumber       String    @map("phone_number")
+  encryptedName     String    @map("encrypted_name")
+  encryptedDob      String?   @map("encrypted_dob")
+  gender            String?   @map("gender")
+  preferredLocale   String?   @map("preferred_locale")
+  consentStatus     String    @map("consent_status")
+  consentRecordedAt DateTime? @map("consent_recorded_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  metadata          Json?
+  isTestIdentity    Boolean   @default(false) @map("is_test_identity")
+
+  // Condition Tracking
+  condition          String?   @map("condition")
+  classification     String?   @map("classification")
+  conditionStartDate DateTime? @map("condition_start_date")
+  triggerType        String?   @map("trigger_type")
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id])
+  callSessions    CallSession[]
+  clinicalEvents  ClinicalEvent[]
+  scheduledCalls  ScheduledCall[]
+  patientFacts    PatientFact[]
+  assessments     Assessment[]
+  assessmentFlags AssessmentFlag[]
+
+  @@unique([tenantId, phoneNumber])
+  @@index([tenantId])
+  @@index([phoneNumber])
+  @@index([preferredLocale])
+  @@index([condition])
+  @@map("patients")
+}
+
+model ScreeningRecord {
+  id                String    @id @default(uuid())
+  tenantId          String    @map("tenant_id")
+  schemaId          String    @map("schema_id")
+  schemaVersion     String    @map("schema_version")
+
+  // PII — encrypted at rest, matching the Patient.encryptedName precedent.
+  // All optional: identifiers are optional per spec (a deployment may opt out
+  // of any one), and encryption only applies to whichever were actually collected.
+  encryptedName       String? @map("encrypted_name")
+  encryptedPhone      String? @map("encrypted_phone")
+  encryptedExternalId String? @map("encrypted_external_id")
+  encryptedAbhaId     String? @map("encrypted_abha_id")
+
+  filledBy          String    @map("filled_by") // 'patient' | 'family_lar' | 'hcw'
+  answers           Json      @default("{}")
+  status            String    @default("in_progress") // 'in_progress' | 'completed'
+  recommendation    Json?
+  stopOutcome       Json?     @map("stop_outcome") // { outcome: 'stop'|'defer', message } if the flow was halted
+
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  tenant            Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@map("screening_records")
+}
+
+model CallSession {
+  id              String    @id @default(uuid())
+  tenantId        String    @map("tenant_id")
+  patientId       String    @map("patient_id")
+  callPurpose     String    @map("call_purpose")
+  state           String
+  locale          String
+  startedAt       DateTime  @default(now()) @map("started_at")
+  endedAt         DateTime? @map("ended_at")
+  durationSeconds Int?      @map("duration_seconds")
+  outcome           String?
+  recordingUrl      String?   @map("recording_url")
+  metadata          Json?
+  createdAt         DateTime  @default(now()) @map("created_at")
+  messageSessionId  String?   @map("message_session_id")
+  summaryWamid      String?   @map("summary_wamid")
+  feedbackText      String?   @map("feedback_text")
+
+  // Knowledge graph context -- deliberately NOT a real foreign key. This is a
+  // soft/historical reference: which KG was actually active when this call
+  // happened. A real FK (with any onDelete behavior) would either block
+  // deleting old KGs forever (Restrict) or destroy this exact audit value
+  // the moment an old KG is deleted (SetNull/Cascade) -- both wrong for a
+  // record whose whole purpose is surviving the KG's deletion unchanged.
+  knowledgeGraphId String? @map("knowledge_graph_id")
+
+  // Phase tracking
+  currentPhase   String? @map("current_phase")
+  daysSinceStart Int?    @map("days_since_start")
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  patient         Patient          @relation(fields: [patientId], references: [id])
+  transcripts     Transcript[]
+  clinicalEvents  ClinicalEvent[]
+  assessments     Assessment[]
+  assessmentFlags AssessmentFlag[]
+  patientFacts    PatientFact[]
+
+  @@index([tenantId])
+  @@index([patientId])
+  @@index([startedAt(sort: Desc)])
+  @@index([outcome])
+  @@index([knowledgeGraphId])
+  @@index([summaryWamid])
+  @@map("call_sessions")
+}
+
+model Transcript {
+  id              String   @id @default(uuid())
+  sessionId       String   @map("session_id")
+  turnNumber      Int      @map("turn_number")
+  speaker         String
+  originalText    String   @map("original_text")
+  translatedText  String?  @map("translated_text")
+  timestamp       DateTime @default(now())
+  confidenceScore Float?   @map("confidence_score")
+  metadata        Json?
+
+  session CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, turnNumber])
+  @@map("transcripts")
+}
+
+model ClinicalEvent {
+  id                 String   @id @default(uuid())
+  tenantId           String   @map("tenant_id")
+  sessionId          String   @map("session_id")
+  patientId          String   @map("patient_id")
+  eventType          String   @map("event_type")
+  eventData          Json     @map("event_data")
+  riskScore          String?  @map("risk_score")
+  requiresEscalation Boolean  @default(false) @map("requires_escalation")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  tenant  Tenant      @relation(fields: [tenantId], references: [id])
+  session CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  patient Patient     @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId])
+  @@index([sessionId])
+  @@index([patientId])
+  @@index([riskScore])
+  @@index([requiresEscalation])
+  @@map("clinical_events")
+}
+
+model KnowledgeBase {
+  id          String                       @id @default(uuid())
+  content     String
+  contentType String                       @map("content_type")
+  source      String?
+  locale      String?
+  embedding   Unsupported("vector(1536)")?
+  metadata    Json?
+  createdAt   DateTime                     @default(now()) @map("created_at")
+  updatedAt   DateTime                     @updatedAt @map("updated_at")
+
+  @@index([locale])
+  @@index([contentType])
+  @@map("knowledge_base")
+}
+
+model LanguagePack {
+  id             String   @id @default(uuid())
+  localeCode     String   @unique @map("locale_code")
+  displayName    String   @map("display_name")
+  scripts        Json
+  medicalLexicon Json     @map("medical_lexicon")
+  voiceProfile   String?  @map("voice_profile")
+  sttHints       Json?    @map("stt_hints")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([localeCode])
+  @@map("language_packs")
+}
+
+model ScheduledCall {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  patientId    String   @map("patient_id")
+  callPurpose  String   @map("call_purpose")
+  scheduledFor DateTime @map("scheduled_for")
+  status       String   @default("PENDING")
+  retryCount   Int      @default(0) @map("retry_count")
+  maxRetries   Int      @default(3) @map("max_retries")
+  sessionId    String?  @map("session_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId])
+  @@index([scheduledFor])
+  @@index([status])
+  @@index([patientId])
+  @@map("scheduled_calls")
+}
+
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  encryptedPassword String    @map("encrypted_password")
+  role              String
+  conditions        String[]  @default([])
+  fullName          String?   @map("full_name")
+  isActive          Boolean   @default(true) @map("is_active")
+  lastLoginAt       DateTime? @map("last_login_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  auditLogs   AuditLog[]
+  tenantUsers TenantUser[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model TenantUser {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  userId    String   @map("user_id")
+  role      String // Tenant-specific role
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+  @@index([userId])
+  @@map("tenant_users")
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  userId       String?  @map("user_id")
+  action       String
+  resourceType String?  @map("resource_type")
+  resourceId   String?  @map("resource_id")
+  ipAddress    String?  @map("ip_address")
+  userAgent    String?  @map("user_agent")
+  changes      Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt(sort: Desc)])
+  @@index([resourceType, resourceId])
+  @@map("audit_logs")
+}
+
+model ProviderConfig {
+  id           String   @id @default(uuid())
+  providerType String   @map("provider_type")
+  providerName String   @map("provider_name")
+  config       Json
+  isActive     Boolean  @default(true) @map("is_active")
+  priority     Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenantId     String   @map("tenant_id")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, providerType, isActive])
+  @@unique([tenantId, providerName])
+  @@map("provider_configs")
+}
+
+model CallSessionsCache {
+  sessionId   String   @id @map("session_id")
+  patientId   String   @map("patient_id")
+  sessionData Json     @map("session_data")
+  state       String
+  locale      String
+  expiresAt   DateTime @map("expires_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([expiresAt])
+  @@index([patientId])
+  @@index([state])
+  @@map("call_sessions_cache")
+}
+
+enum KnowledgeGraphStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model KnowledgeGraph {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  // Condition (ONE per knowledge graph, matches Condition name in XLSX)
+  condition String @map("condition") // e.g., "Cardiac Surgery", "Heart Failure"
+
+  // Metadata
+  description    String?
+  sourceFileName String               @map("source_file_name")
+  version        String
+  status         KnowledgeGraphStatus @default(DRAFT)
+
+  // Validation
+  isValid          Boolean @default(false) @map("is_valid")
+  validationErrors Json?   @map("validation_errors")
+
+  // Content
+  jsonData Json   @map("json_data")
+  filePath String @map("file_path")
+
+  // Phase Configuration
+  phaseNames String[] @map("phase_names")
+
+  // Timestamps
+  uploadedBy String?  @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  tenant   Tenant        @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, condition, version])
+  @@index([tenantId])
+  @@index([condition])
+  @@index([status])
+  @@index([condition, version])
+  @@map("knowledge_graphs")
+}
+
+model TenantDocument {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  title       String
+  description String?
+  content     String   @db.Text
+  contentType String   @map("content_type") // e.g., "text/plain", "text/markdown", "application/pdf"
+  metadata    Json?    // Additional metadata (source, author, tags, etc.)
+  status      String   @default("ACTIVE") // ACTIVE, ARCHIVED, DELETED
+  summary          String?                     @db.Text
+  keywords         String[]
+  summaryEmbedding Unsupported("vector(1536)")? @map("summary_embedding")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant     Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  embeddings DocumentEmbedding[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([contentType])
+  @@map("tenant_documents")
+}
+
+model DocumentEmbedding {
+  id             String                      @id @default(uuid())
+  documentId     String                      @map("document_id")
+  chunkIndex     Int                         @map("chunk_index")
+  chunkText      String                      @db.Text @map("chunk_text")
+  embedding      Unsupported("vector(1536)")
+  embeddingModel String                      @map("embedding_model") @default("text-embedding-3-small")
+  createdAt      DateTime                    @default(now()) @map("created_at")
+
+  document TenantDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId])
+  @@map("document_embeddings")
+}
+
+model MessageSession {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  patientId      String   @map("patient_id")
+  channel        String
+  senderId       String   @map("sender_id")
+  state          String
+  locale         String?
+  transcript     Json     @default("[]")
+  clinicalEvents Json     @default("[]") @map("clinical_events")
+  flowState      Json?    @map("flow_state")
+  // Maps an outbound question's WhatsApp wamid -> the question text, so an
+  // inbound quote-reply can be attributed to the specific question it answers.
+  // Capped to the most recent entries; within-session only (issue #141).
+  questionWamids Json     @default("{}") @map("question_wamids")
+  // Deterministic question-sequencer state (issue #161): HPI/ROS queues, the
+  // active agenda item, noted-not-drilled symptoms, completed items. Null until
+  // the first clinical CONVERSATION turn. Within-session only (resets with the
+  // 24h window in findOrResetSession).
+  agendaState   Json?    @map("agenda_state")
+  lastMessageAt  DateTime  @map("last_message_at")
+  expiresAt      DateTime  @map("expires_at")
+  closedAt       DateTime? @map("closed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([channel, senderId, tenantId])
+  @@index([tenantId])
+  @@index([expiresAt])
+  @@index([channel, tenantId, closedAt, lastMessageAt])
+  @@map("message_sessions")
+}
+
+model PatientFact {
+  id                   String   @id @default(uuid())
+  tenantId             String   @map("tenant_id")
+  patientId            String   @map("patient_id")
+  factId               String   @map("fact_id")
+  valueNumber          Float?   @map("value_number")
+  valueBoolean         Boolean? @map("value_boolean")
+  valueString          String?  @map("value_string")
+  observedAt           DateTime @map("observed_at")
+  timeUncertaintyHours Float    @default(0) @map("time_uncertainty_hours")
+  recordedAt           DateTime @default(now()) @map("recorded_at")
+  sourceSessionId      String?  @map("source_session_id")
+  supersedesId         String?  @unique @map("supersedes_id")
+  confidence           Float?
+  extractionClass      String   @map("extraction_class")
+
+  supersedes    PatientFact? @relation("SupersedesChain", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy  PatientFact? @relation("SupersedesChain")
+
+  patient Patient      @relation(fields: [patientId], references: [id])
+  tenant  Tenant       @relation(fields: [tenantId], references: [id])
+  session CallSession? @relation(fields: [sourceSessionId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, patientId, factId, observedAt])
+  @@index([sourceSessionId])
+  @@map("patient_facts")
+}
+
+model Assessment {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  patientId      String   @map("patient_id")
+  sessionId      String   @map("session_id")
+  outcome        String
+  patientAction  String?  @map("patient_action")
+  escalationType String?  @map("escalation_type")
+  deterministic  Boolean
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  tenant  Tenant           @relation(fields: [tenantId], references: [id])
+  patient Patient          @relation(fields: [patientId], references: [id])
+  session CallSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  flags   AssessmentFlag[]
+
+  @@index([tenantId, patientId, sessionId])
+  @@index([sessionId])
+  @@map("assessments")
+}
+
+model AssessmentFlag {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  patientId    String   @map("patient_id")
+  sessionId    String   @map("session_id")
+  assessmentId String   @map("assessment_id")
+  redFlagId    String   @map("red_flag_id")
+  decidedBy    String   @map("decided_by")
+  fired        Boolean? @map("fired")
+  evidence     String?  @map("evidence")
+  rulesTried   Json     @map("rules_tried")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id])
+  patient    Patient     @relation(fields: [patientId], references: [id])
+  assessment Assessment  @relation(fields: [assessmentId], references: [id])
+  session    CallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, assessmentId])
+  @@index([sessionId])
+  @@map("assessment_flags")
+}

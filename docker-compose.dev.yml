@@ -1,0 +1,104 @@
+# Development Docker Compose - Hot reload enabled
+# Usage: docker-compose -f docker-compose.dev.yml up
+
+services:
+  # PostgreSQL Database with pgvector (same as production)
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ainurse-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ainurse
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: ainurse
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    networks:
+      - ainurse-dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ainurse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend with hot reload (nodemon)
+  backend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: ainurse-backend-dev
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      LOG_LEVEL: debug
+      DATABASE_URL: postgresql://ainurse:${DB_PASSWORD:-changeme}@postgres:5432/ainurse
+
+      # API Keys
+      SARVAM_API_KEY: ${SARVAM_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      INTRON_API_KEY: ${INTRON_API_KEY}
+
+      # Security
+      JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret_not_for_production_use}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev_encryption_key_32_chars_min}
+
+      # Optional
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      EXOTEL_API_KEY: ${EXOTEL_API_KEY}
+      EXOTEL_API_TOKEN: ${EXOTEL_API_TOKEN}
+      EXOTEL_SID: ${EXOTEL_SID}
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount source code for hot reload
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+      - ./scripts:/app/scripts
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      # Prevent node_modules from being overwritten
+      - /app/node_modules
+    networks:
+      - ainurse-dev-network
+    command: npm run dev
+
+  # Frontend with Vite hot reload
+  frontend-dev:
+    build:
+      context: ./admin-dashboard
+      dockerfile: Dockerfile.dev
+    container_name: ainurse-frontend-dev
+    restart: unless-stopped
+    depends_on:
+      - backend-dev
+    environment:
+      VITE_API_URL: http://localhost:3000
+    ports:
+      - "3001:3001"
+    volumes:
+      # Mount source for hot reload
+      - ./admin-dashboard/src:/app/src
+      - ./admin-dashboard/public:/app/public
+      - ./admin-dashboard/index.html:/app/index.html
+      - ./admin-dashboard/vite.config.ts:/app/vite.config.ts
+      # Prevent node_modules from being overwritten
+      - /app/node_modules
+    networks:
+      - ainurse-dev-network
+    command: npm run dev
+
+networks:
+  ainurse-dev-network:
+    driver: bridge
+
+volumes:
+  postgres_dev_data:
+    driver: local

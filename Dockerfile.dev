@@ -1,0 +1,32 @@
+# Development Dockerfile - Hot reload with nodemon
+FROM node:20-alpine
+
+# Install dependencies for native modules and Python
+RUN apk add --no-cache python3 py3-pip make g++
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# Install all dependencies (including dev dependencies)
+RUN npm install
+
+# Install Python dependencies
+RUN pip3 install --no-cache-dir openpyxl pandas
+
+# Copy prisma schema
+COPY prisma ./prisma
+
+# Generate Prisma Client
+RUN npx prisma generate
+
+# Create directories
+RUN mkdir -p /app/uploads /app/logs
+
+# Expose port
+EXPOSE 3000
+
+# Start with nodemon for hot reload
+CMD ["npm", "run", "dev"]
